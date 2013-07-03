@@ -3,6 +3,8 @@ import jack
 import sys
 # Python Qt4 bindings for GUI objects
 from PySide import QtGui
+import matplotlib
+matplotlib.use('Qt4Agg')
 # Matplotlib Figure object
 from matplotlib.figure import Figure
 # import the Qt4Agg FigureCanvas object, that binds Figure to
@@ -74,7 +76,7 @@ class JScopeWin(FigureCanvas):
         x = self.ReadFromJack()
         for i in self.scopes:
             self.input_ring[i].add(np.squeeze(x[i,:]))
-        self.plot2()
+        self.plot()
 
     def ReadFromJack(self):
         #return np.random.randn(self.N)
