@@ -1,45 +1,50 @@
 import numpy as np
 import jack
 import sys
-import signal
-# Python Qt4 bindings for GUI objects
 from PySide import QtGui, QtCore
 import matplotlib
 matplotlib.use('Qt4Agg')
-# Matplotlib Figure object
 from matplotlib.figure import Figure
-# import the Qt4Agg FigureCanvas object, that binds Figure to
-# Qt4Agg backend. It also inherits from QWidget
 from matplotlib.backends.backend_qt4agg \
-import FigureCanvasQTAgg as FigureCanvas
+    import FigureCanvasQTAgg as FigureCanvas
 import argparse
 
+from multiprocessing import Process, Queue
+import affinity
+
+debug = False
 
 class RingBuffer():
+    "A 1D ring buffer using numpy arrays"
     def __init__(self, length):
         self.data = np.zeros(length, dtype='f')
         self.index = 0
 
     def add(self, x):
+        "adds array x to ring buffer"
         x_index = (self.index + np.arange(x.size)) % self.data.size
         self.data[x_index] = x
         self.index = x_index[-1] + 1
 
     def fifo(self):
+        "Returns the first-in-first-out data in the ring buffer"
         idx = (self.index + np.arange(self.data.size)) % self.data.size
         return self.data[idx]
 
 class JScopeWin(FigureCanvas):
+    """Widget containing the scolling scope"""
     def __init__(self, nscopes, subsamp_factor, length, zoom):
-        self.update_time = 0
-        self.plot_timer = QtCore.QTimer()
+        self.fig = Figure()
+        FigureCanvas.__init__(self, self.fig)
+
+        # setup JACK connections
         self.scopes = range(nscopes)
         jack.attach("jscope")
-        print(jack.get_ports())
         for i in self.scopes:
             jack.register_port("in_%d" %(i), jack.IsInput)
         jack.activate()
-        print jack.get_ports()
+        self.ACTIVATED = True
+        if debug: print("jack ports: " + str(jack.get_ports()))
         #jack.connect(jack.get_ports()[-2], "jscope:in_1")
 
         self.N = jack.get_buffer_size()
@@ -50,7 +55,7 @@ class JScopeWin(FigureCanvas):
         self.input_slice = np.zeros((nscopes, self.N), dtype='f')
         self.output_slice = self.input_slice.copy()
 
-        self.fig = Figure()
+        # setup plots
         self.subsamp_factor = subsamp_factor
         self.ax = []
         self.plot_data = []
@@ -60,61 +65,80 @@ class JScopeWin(FigureCanvas):
         for i in self.scopes:
             self.ax.append(self.fig.add_subplot(nscopes, 1, i+1))
             self.ax[i].set_ylim(-zoom, zoom)
-            self.plot_data.append([])
-            foo, = self.ax[i].plot([], self.plot_data[i], 'm')
+            self.plot_data.append(self.abscissa[::self.subsamp_factor])
+            foo, = self.ax[i].plot(self.abscissa[::self.subsamp_factor], self.plot_data[i], 'm')
             self.l_plot_data.append(foo)
             self.input_ring.append(RingBuffer(self.abscissa.size))
             self.output_ring.append(RingBuffer(self.abscissa.size))
             self.ax[i].set_xlim(self.abscissa[0], self.abscissa[-1])
             self.ax[i].grid()
 
-        FigureCanvas.__init__(self, self.fig)
-        self.fig.canvas.draw()
-
-        self.timerEvent(None)
-        self.timer = self.startTimer(1)
-        #self.plot_timerEvent(None)
+        # initialize two timers, one for reading jack data
+        # and a second for plotting
         
-        self.plot_timer.timeout.connect(self.plot_timerEvent)
-        self.plot_timer.start(self.update_time)
+        #self.timerEvent(None)
+        #self.timer = self.startTimer(1) #  Jack event timer
+        self.plot_timer = QtCore.QTimer()
+        self.plot_timer.timeout.connect(self.plot_from_pipe)
+        self.update_time = 1
+        self.plot_timer.start(self.update_time) #  plotting event timer
+
+        self.queue = Queue(1)
+        self.p = Process(target=self.jack_process_loop, args=(self.queue,))
+        self.p.start()
+        
+
+    def jack_process_loop(self, q):
+        while self.ACTIVATED:
+            x = self.ReadFromJack()
+            for i in self.scopes:
+                self.input_ring[i].add(np.squeeze(x[i,:]))
+            data_to_plot = [self.input_ring[i].fifo() for i in self.scopes]
+            q.put(data_to_plot)
+
+    def plot_from_pipe(self):
+        for i,x in enumerate(np.random.randn(10, len(self.abscissa))): #self.parent_conn.recv()):
+            self.l_plot_data[i].set_ydata(x[::self.subsamp_factor])
+        self.fig.canvas.draw()
 
     def plot_timerEvent(self):
             self.plot()
 
     def timerEvent(self, evt):
-        x = self.ReadFromJack()
-        for i in self.scopes:
-            self.input_ring[i].add(np.squeeze(x[i,:]))
-        
-        #self.plot()
+        if self.ACTIVATED:
+            x = self.ReadFromJack()
+            for i in self.scopes:
+                self.input_ring[i].add(np.squeeze(x[i,:]))
 
     def ReadFromJack(self):
-        #return np.random.randn(self.N)
         try:
             jack.process(self.input_slice, self.output_slice)
         except jack.InputSyncError:
             print "Input Sync Error"
             #self.update_time += 20
             #print("setting update time to %d" %(self.update_time))
-            self.plot_timer.start(self.update_time)
             pass
         except jack.OutputSyncError:
             print "Output Sync Error"
             pass
-        #print ".",
-        #print(self.input_slice)
-        #print(self.output_slice)
+        if debug: print("JACK input slice:" + str(self.input_slice))
+        if debug: print("JACK output slice:" + str(self.output_slice))
         return self.output_slice
 
-    def plot2(self):
-        pass
     def plot(self):
         for i in self.scopes:
             x = self.input_ring[i].fifo()
             self.plot_data[i] = x
-            self.l_plot_data[i].set_data(self.abscissa[::self.subsamp_factor],
-                                         x[::self.subsamp_factor])
+            self.l_plot_data[i].set_data(x[::self.subsamp_factor])
         self.fig.canvas.draw()
+
+    def closeEvent(self, evt):
+        if debug: print('closing')
+        jack.deactivate()
+        self.ACTIVATED = False
+        jack.detach()
+        self.p.terminate()
+        evt.accept()
 
 
 if __name__ == '__main__':
@@ -130,8 +154,10 @@ if __name__ == '__main__':
                         default is 2')
     parser.add_argument('-z', '--zoom', type=float, dest='zoom',
                         default=1, help='sets the y axis, ranges from 0 to 1')
+    parser.add_argument('-v', '--verbose', action='store_true', help='verbose output')
     args = parser.parse_args()
 
+    debug = args.verbose
     # create the GUI application
     
     app = QtGui.QApplication(sys.argv)
@@ -144,8 +170,7 @@ if __name__ == '__main__':
     # start the Qt main loop execution, exiting from this script
     # with the same return code of Qt application
     sys.exit(app.exec_())
-    jack.deactivate() #todo add these one quit
-    jack.detach()
+    
     print('done') #never prints
 
 
