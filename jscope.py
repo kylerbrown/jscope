@@ -47,13 +47,15 @@ plotlength = 1
 abscissa = np.flipud(-np.arange(Sr*plotlength) / Sr)
 resample_factor = int(abscissa.size / 1000)
 
+rings = [RingBuffer(len(abscissa)) for i in range(nscopes)]
+
 input_slice = np.zeros((nscopes, N), dtype='f')
 output_slice = input_slice.copy()
 
 
 app = pg.mkQApp()
 #view = RemoteGraphicsView.RemoteGraphicsView()
-#view.pg.setConfigOptions(antialias=False)
+pg.setConfigOptions(antialias=True)
 #view.setWindowTitle('pyqtgraph example: RemoteSpeedTest')
 plots = [pg.PlotWidget() for i in range(nscopes)]
 lplt = pg.PlotWidget()
@@ -75,17 +77,12 @@ lastUpdate = pg.ptime.time()
 avgFps = 0.0
 
 def update():
-    global label, lastUpdate, avgFps, rpltfunc, input_slice, output_slice, plots
+    global label, lastUpdate, avgFps, input_slice, output_slice, plots, rings
     ReadFromJack(input_slice, output_slice)
-#    data = np.random.randn(100) #np.squeeze(output_slice[0,:])
-#    rplt.plot(data, clear=True, _callSync='off')  ## We do not expect a return value.
-                                                      ## By turning off callSync, we tell
-                                                      ## the proxy that it does not need to 
-                                                      ## wait for a reply from the remote
-                                                      ## process.
     for i, p in enumerate(plots):
         data = np.squeeze(output_slice[i,:])
-        p.plot(data, clear=True)
+        rings[i].add(data)
+        p.plot(rings[i].fifo(), clear=True)
     now = pg.ptime.time()
     fps = 1.0 / (now - lastUpdate)
     lastUpdate = now
@@ -99,7 +96,7 @@ timer.start(0)
 def jack_cleanup():
     jack.deactivate()
     jack.detach()
-    print('detached from jack!')
+    print('jscope detached from jack')
 
 ## Start Qt event loop unless running in interactive mode or using pyside.
 if __name__ == '__main__':
