@@ -39,11 +39,13 @@ setup(
     license='MIT License',
     author='Kyler Brown',
     tests_require=['pytest'],
-    install_requires=['pyjack>=0.5.1',
-                      'pyqtgraph>=0.9.7'
+    install_requires=['pyjack>=0.5.2',
+                      'pyqtgraph>=0.9.7',
+                      'numpy>=1.7.1',
+                      'PySide>=1.2.1'
                     ],
     dependency_links = [
-        'git+git://git.code.sf.net/p/py-jack/code'
+        'http://downloads.sourceforge.net/project/py-jack/py-jack/0.5.2/pyjack-0.5.2.tar.gz'
     ],
     cmdclass={'test': PyTest},
     author_email='kylerjbrown@gmail.com',
