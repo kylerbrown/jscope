@@ -42,6 +42,9 @@ setup(
     install_requires=['pyjack>=0.5.1',
                       'pyqtgraph>=0.9.7'
                     ],
+    dependency_links = [
+        'git+git://git.code.sf.net/p/py-jack/code'
+    ],
     cmdclass={'test': PyTest},
     author_email='kylerjbrown@gmail.com',
     description='A scrolling oscilloscope for the JACK audio framework',
